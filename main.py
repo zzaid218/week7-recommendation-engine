@@ -1,13 +1,16 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from datetime import datetime
 import json
 
 from database import engine
-from models import users, user_skills, courses, recommendation_logs, create_tables
+from models import create_tables
 from embeddings import embed_skills, rank_courses
 from seed import seed
 from llm import extract_skills_with_llm, explain_recommendation
+from crud import (
+    get_all_courses, get_user_by_id, get_user_skills,
+    get_all_users, create_user, save_log, get_all_logs
+)
 
 create_tables(engine)
 seed()
@@ -31,22 +34,13 @@ class AddUser(BaseModel):
     name: str
     skills: list[str]
 
-# --- Helper ---
+# --- Helpers ---
 def add_explanations(skills, ranked):
     for course in ranked:
         course["explanation"] = explain_recommendation(
             skills, course["title"], course["description"]
         )
     return ranked
-
-def log_recommendation(conn, user_id, skills, ranked):
-    conn.execute(recommendation_logs.insert().values(
-        user_id=user_id,
-        input_skills=json.dumps(skills),
-        recommended_courses=json.dumps([c["title"] for c in ranked]),
-        created_at=datetime.utcnow()
-    ))
-    conn.commit()
 
 # --- Routes ---
 @app.get("/")
@@ -59,11 +53,11 @@ def recommend_by_text(req: RecommendByText):
     if not skills:
         raise HTTPException(400, "No skills provided.")
     with engine.connect() as conn:
-        all_courses = conn.execute(courses.select()).fetchall()
+        all_courses = get_all_courses(conn)
         user_vec = embed_skills(skills)
         ranked = rank_courses(user_vec, all_courses)[:req.top_n]
         ranked = add_explanations(skills, ranked)
-        log_recommendation(conn, None, skills, ranked)
+        save_log(conn, None, skills, ranked)
     return {
         "extracted_skills": skills,
         "recommended_courses": [c["title"] for c in ranked],
@@ -74,13 +68,10 @@ def recommend_by_text(req: RecommendByText):
 @app.post("/api/recommend/by-user")
 def recommend_by_user(req: RecommendByUser):
     with engine.connect() as conn:
-        user = conn.execute(users.select().where(users.c.id == req.user_id)).fetchone()
+        user = get_user_by_id(conn, req.user_id)
         if not user:
             raise HTTPException(404, "User not found.")
-        skills_rows = conn.execute(
-            user_skills.select().where(user_skills.c.user_id == req.user_id)
-        ).fetchall()
-        skills = [row.skill_name for row in skills_rows]
+        skills = get_user_skills(conn, req.user_id)
         if not skills:
             return {
                 "user_id": req.user_id,
@@ -89,13 +80,13 @@ def recommend_by_user(req: RecommendByUser):
                 "recommended_courses": [],
                 "explanation": "No skills found for this user."
             }
-        all_courses = conn.execute(courses.select()).fetchall()
+        all_courses = get_all_courses(conn)
         if not all_courses:
             raise HTTPException(404, "No courses available.")
         user_vec = embed_skills(skills)
         ranked = rank_courses(user_vec, all_courses)[:req.top_n]
         ranked = add_explanations(skills, ranked)
-        log_recommendation(conn, req.user_id, skills, ranked)
+        save_log(conn, req.user_id, skills, ranked)
     return {
         "user_id": req.user_id,
         "user": user.name,
@@ -111,13 +102,13 @@ def recommend_from_cv(req: ExtractAndRecommend):
     if not skills:
         raise HTTPException(400, "Could not extract skills from text.")
     with engine.connect() as conn:
-        all_courses = conn.execute(courses.select()).fetchall()
+        all_courses = get_all_courses(conn)
         if not all_courses:
             raise HTTPException(404, "No courses available.")
         user_vec = embed_skills(skills)
         ranked = rank_courses(user_vec, all_courses)[:req.top_n]
         ranked = add_explanations(skills, ranked)
-        log_recommendation(conn, None, skills, ranked)
+        save_log(conn, None, skills, ranked)
     return {
         "input_text": req.text,
         "extracted_skills": skills,
@@ -129,41 +120,29 @@ def recommend_from_cv(req: ExtractAndRecommend):
 @app.post("/api/users")
 def add_user(req: AddUser):
     with engine.connect() as conn:
-        result = conn.execute(users.insert().values(name=req.name))
-        user_id = result.inserted_primary_key[0]
-        for skill in req.skills:
-            conn.execute(user_skills.insert().values(user_id=user_id, skill_name=skill))
-        conn.commit()
+        user_id = create_user(conn, req.name, req.skills)
     return {"id": user_id, "name": req.name, "skills": req.skills}
 
 @app.get("/api/users")
 def list_users():
     with engine.connect() as conn:
-        all_users = conn.execute(users.select()).fetchall()
+        all_users = get_all_users(conn)
         result = []
         for u in all_users:
-            skills_rows = conn.execute(
-                user_skills.select().where(user_skills.c.user_id == u.id)
-            ).fetchall()
-            result.append({
-                "id": u.id,
-                "name": u.name,
-                "skills": [s.skill_name for s in skills_rows]
-            })
+            skills = get_user_skills(conn, u.id)
+            result.append({"id": u.id, "name": u.name, "skills": skills})
     return result
 
 @app.get("/api/courses")
 def list_courses():
     with engine.connect() as conn:
-        all_courses = conn.execute(courses.select()).fetchall()
+        all_courses = get_all_courses(conn)
     return [{"id": c.id, "title": c.title, "description": c.description} for c in all_courses]
 
 @app.get("/api/logs")
 def get_logs():
     with engine.connect() as conn:
-        logs = conn.execute(
-            recommendation_logs.select().order_by(recommendation_logs.c.created_at.desc())
-        ).fetchall()
+        logs = get_all_logs(conn)
     return [
         {
             "id": l.id,
