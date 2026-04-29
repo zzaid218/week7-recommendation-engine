@@ -1,8 +1,6 @@
 import numpy as np
-import os
+import json
 from sentence_transformers import SentenceTransformer
-from dotenv import load_dotenv
-load_dotenv()
 
 _model = SentenceTransformer("all-MiniLM-L6-v2")
 
@@ -18,16 +16,16 @@ def cosine_similarity(a, b) -> float:
     na, nb = np.linalg.norm(a), np.linalg.norm(b)
     return float(np.dot(a, b) / (na * nb)) if na and nb else 0.0
 
-def rank_courses(user_vector, courses) -> list[dict]:
+def rank_courses(user_vector, course_rows) -> list[dict]:
     results = []
-    for course in courses:
-        vec = course.get_embedding()
-        if vec is None:
+    for row in course_rows:
+        if not row.embedding:
             continue
+        vec = json.loads(row.embedding)
         results.append({
-            "id": course.id,
-            "title": course.title,
-            "description": course.description,
+            "id": row.id,
+            "title": row.title,
+            "description": row.description,
             "similarity_score": round(cosine_similarity(user_vector, vec), 4)
         })
     return sorted(results, key=lambda x: x["similarity_score"], reverse=True)

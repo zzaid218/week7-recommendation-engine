@@ -1,6 +1,7 @@
-from database import SessionLocal, engine
-from models import Base, User, UserSkill, Course
+from database import engine
+from models import metadata, users, user_skills, courses, create_tables
 from embeddings import embed_text
+import json
 
 COURSES = [
     ("Python for Data Science", "Learn Python for data analysis using pandas, numpy, and matplotlib."),
@@ -22,26 +23,31 @@ USERS = [
 ]
 
 def seed():
-    Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
-    if db.query(Course).count() > 0:
-        print("Already seeded.")
-        db.close()
-        return
-    print("Seeding courses...")
-    for title, desc in COURSES:
-        c = Course(title=title, description=desc)
-        c.set_embedding(embed_text(f"{title}. {desc}"))
-        db.add(c)
-    print("Seeding users...")
-    for name, skills in USERS:
-        u = User(name=name)
-        db.add(u)
-        db.flush()
-        for s in skills:
-            db.add(UserSkill(user_id=u.id, skill_name=s))
-    db.commit()
-    db.close()
+    create_tables(engine)
+    with engine.connect() as conn:
+        # Check if already seeded
+        result = conn.execute(courses.select()).fetchall()
+        if result:
+            print("Already seeded.")
+            return
+
+        print("Seeding courses...")
+        for title, desc in COURSES:
+            embedding = json.dumps(embed_text(f"{title}. {desc}"))
+            conn.execute(courses.insert().values(
+                title=title, description=desc, embedding=embedding
+            ))
+
+        print("Seeding users...")
+        for name, skills in USERS:
+            result = conn.execute(users.insert().values(name=name))
+            user_id = result.inserted_primary_key[0]
+            for skill in skills:
+                conn.execute(user_skills.insert().values(
+                    user_id=user_id, skill_name=skill
+                ))
+
+        conn.commit()
     print("Done.")
 
 if __name__ == "__main__":

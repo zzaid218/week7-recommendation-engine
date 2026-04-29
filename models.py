@@ -1,40 +1,33 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Text
-from sqlalchemy.orm import relationship
-from database import Base
-import json
-from sqlalchemy import DateTime
+from sqlalchemy import Table, Column, Integer, String, Text, DateTime, MetaData
 from datetime import datetime
 
-class RecommendationLog(Base):
-    __tablename__ = "recommendation_logs"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, nullable=True)
-    input_skills = Column(Text)
-    recommended_courses = Column(Text)  # stored as JSON
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-class User(Base):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
-    skills = relationship("UserSkill", back_populates="user")
+metadata = MetaData()
 
-class UserSkill(Base):
-    __tablename__ = "user_skills"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    skill_name = Column(String, nullable=False)
-    user = relationship("User", back_populates="skills")
+users = Table("users", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("name", String, nullable=False),
+)
 
-class Course(Base):
-    __tablename__ = "courses"
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String, nullable=False)
-    description = Column(Text, nullable=False)
-    embedding = Column(Text, nullable=True) 
+user_skills = Table("user_skills", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", Integer, nullable=False),
+    Column("skill_name", String, nullable=False),
+)
 
-    def get_embedding(self):
-        return json.loads(self.embedding) if self.embedding else None
+courses = Table("courses", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("title", String, nullable=False),
+    Column("description", Text, nullable=False),
+    Column("embedding", Text, nullable=True),
+)
 
-    def set_embedding(self, vec):
-        self.embedding = json.dumps(vec)
+recommendation_logs = Table("recommendation_logs", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", Integer, nullable=True),
+    Column("input_skills", Text),
+    Column("recommended_courses", Text),
+    Column("created_at", DateTime, default=datetime.utcnow),
+)
+
+def create_tables(engine):
+    metadata.create_all(engine)
