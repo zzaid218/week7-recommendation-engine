@@ -1,5 +1,8 @@
 import numpy as np
+import os
 from sentence_transformers import SentenceTransformer
+from dotenv import load_dotenv
+load_dotenv()
 
 _model = SentenceTransformer("all-MiniLM-L6-v2")
 

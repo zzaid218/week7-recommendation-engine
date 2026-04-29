@@ -6,29 +6,68 @@ from database import engine, get_db
 from models import Base, User, UserSkill, Course, RecommendationLog
 from embeddings import embed_skills, rank_courses
 from seed import seed
+from llm import extract_skills_with_llm
 
 Base.metadata.create_all(bind=engine)
 seed()
 
 app = FastAPI(title="Skills & Course Recommendation Engine")
 
-# --- Schemas ---
+
 class RecommendByUser(BaseModel):
     user_id: int
     top_n: int = 3
 
+class ExtractAndRecommend(BaseModel):
+    text: str
+    top_n: int = 3
+
 class RecommendByText(BaseModel):
-    skills_text: str   # e.g. "Python, machine learning, SQL"
+    skills_text: str   
     top_n: int = 3
 
 class AddUser(BaseModel):
     name: str
     skills: list[str]
 
-# --- Routes ---
+
 @app.get("/")
 def root():
     return {"message": "API is running"}
+@app.post("/api/recommend/from-cv")
+def recommend_from_cv(req: ExtractAndRecommend, db: Session = Depends(get_db)):
+    
+    skills = extract_skills_with_llm(req.text)
+
+    if not skills:
+        raise HTTPException(400, "Could not extract skills from text.")
+
+
+    courses = db.query(Course).all()
+    if not courses:
+        raise HTTPException(404, "No courses available.")
+
+
+    user_vec = embed_skills(skills)
+    ranked = rank_courses(user_vec, courses)[:req.top_n]
+
+    
+    log = RecommendationLog(
+        user_id=None,
+        input_skills=json.dumps(skills),
+        recommended_courses=json.dumps([c["title"] for c in ranked])
+    )
+    db.add(log)
+    db.commit()
+
+    return {
+        "input_text": req.text,
+        "extracted_skills": skills,
+        "recommended_courses": [c["title"] for c in ranked],
+        "top_recommendations": ranked,
+        "explanation": f"Skills extracted by GPT, courses ranked by semantic similarity."
+    }
+
 
 @app.post("/api/recommend")
 def recommend_by_text(req: RecommendByText, db: Session = Depends(get_db)):
@@ -40,7 +79,6 @@ def recommend_by_text(req: RecommendByText, db: Session = Depends(get_db)):
     user_vec = embed_skills(skills)
     ranked = rank_courses(user_vec, courses)[:req.top_n]
 
-    # ✅ ADD HERE — before return
     log = RecommendationLog(
         user_id=None,
         input_skills=json.dumps(skills),
@@ -87,7 +125,7 @@ def recommend_by_user(req: RecommendByUser, db: Session = Depends(get_db)):
     user_vec = embed_skills(skills)
     ranked = rank_courses(user_vec, courses)[:req.top_n]
 
-    # ✅ ADD HERE — before return
+    
     log = RecommendationLog(
         user_id=req.user_id,
         input_skills=json.dumps(skills),

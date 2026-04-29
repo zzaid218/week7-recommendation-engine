@@ -31,7 +31,7 @@ class Course(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
     description = Column(Text, nullable=False)
-    embedding = Column(Text, nullable=True)  # stored as JSON string
+    embedding = Column(Text, nullable=True) 
 
     def get_embedding(self):
         return json.loads(self.embedding) if self.embedding else None
