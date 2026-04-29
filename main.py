@@ -6,7 +6,16 @@ from database import engine, get_db
 from models import Base, User, UserSkill, Course, RecommendationLog
 from embeddings import embed_skills, rank_courses
 from seed import seed
-from llm import extract_skills_with_llm
+from llm import extract_skills_with_llm, explain_recommendation
+
+def add_explanations(skills: list[str], ranked: list[dict]) -> list[dict]:
+    for course in ranked:
+        course["explanation"] = explain_recommendation(
+            skills,
+            course["title"],
+            course["description"]
+        )
+    return ranked
 
 Base.metadata.create_all(bind=engine)
 seed()
@@ -50,6 +59,7 @@ def recommend_from_cv(req: ExtractAndRecommend, db: Session = Depends(get_db)):
 
     user_vec = embed_skills(skills)
     ranked = rank_courses(user_vec, courses)[:req.top_n]
+    ranked = add_explanations(skills, ranked)  
 
     
     log = RecommendationLog(
@@ -74,10 +84,11 @@ def recommend_by_text(req: RecommendByText, db: Session = Depends(get_db)):
     skills = [s.strip() for s in req.skills_text.replace(",", " ").split() if s.strip()]
     if not skills:
         raise HTTPException(400, "No skills provided.")
-    
+
     courses = db.query(Course).all()
     user_vec = embed_skills(skills)
     ranked = rank_courses(user_vec, courses)[:req.top_n]
+    ranked = add_explanations(skills, ranked)  
 
     log = RecommendationLog(
         user_id=None,
@@ -124,6 +135,7 @@ def recommend_by_user(req: RecommendByUser, db: Session = Depends(get_db)):
 
     user_vec = embed_skills(skills)
     ranked = rank_courses(user_vec, courses)[:req.top_n]
+    ranked = add_explanations(skills, ranked)  
 
     
     log = RecommendationLog(
